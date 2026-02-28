@@ -226,39 +226,106 @@ def get_page_code_examples(conn: sqlite3.Connection, page_id: int) -> list[dict]
 
 
 def search_nodes(conn: sqlite3.Connection, query: str, category: str | None = None, limit: int = 20) -> list[dict]:
-    """Search Griptape Nodes by name/description/category."""
+    """Search Griptape Nodes by name/description/category.
+
+    Handles spaced queries like 'Load Image' matching 'LoadImage'.
+    """
+    like = f"%{query}%"
+    stripped = query.replace(" ", "")
+    stripped_like = f"%{stripped}%"
+
     if category:
         rows = conn.execute(
             """
             SELECT n.*, p.url FROM nodes n
             LEFT JOIN pages p ON p.id = n.page_id
-            WHERE n.category = ? AND (n.name LIKE ? OR n.description LIKE ?)
+            WHERE n.category = ? AND (
+                n.name LIKE ? OR n.display_name LIKE ? OR n.description LIKE ?
+                OR REPLACE(n.name, ' ', '') LIKE ?
+                OR REPLACE(n.display_name, ' ', '') LIKE ?
+            )
             ORDER BY n.name
             LIMIT ?
             """,
-            (category, f"%{query}%", f"%{query}%", limit),
+            (category, like, like, like, stripped_like, stripped_like, limit),
         ).fetchall()
     else:
         rows = conn.execute(
             """
             SELECT n.*, p.url FROM nodes n
             LEFT JOIN pages p ON p.id = n.page_id
-            WHERE n.name LIKE ? OR n.description LIKE ? OR n.category LIKE ?
+            WHERE n.name LIKE ? OR n.display_name LIKE ?
+                OR n.description LIKE ? OR n.category LIKE ?
+                OR REPLACE(n.name, ' ', '') LIKE ?
+                OR REPLACE(n.display_name, ' ', '') LIKE ?
             ORDER BY n.name
             LIMIT ?
             """,
-            (f"%{query}%", f"%{query}%", f"%{query}%", limit),
+            (like, like, like, like, stripped_like, stripped_like, limit),
         ).fetchall()
+
+    # Fallback: split multi-word queries into individual words
+    if not rows and " " in query:
+        seen_ids: set[int] = set()
+        combined: list[sqlite3.Row] = []
+        for word in query.split():
+            if len(word) < 2:
+                continue
+            word_like = f"%{word}%"
+            word_rows = conn.execute(
+                """
+                SELECT n.*, p.url FROM nodes n
+                LEFT JOIN pages p ON p.id = n.page_id
+                WHERE n.name LIKE ? OR n.display_name LIKE ? OR n.description LIKE ?
+                ORDER BY n.name
+                LIMIT ?
+                """,
+                (word_like, word_like, word_like, limit),
+            ).fetchall()
+            for r in word_rows:
+                if r["id"] not in seen_ids:
+                    seen_ids.add(r["id"])
+                    combined.append(r)
+        rows = combined[:limit]
+
     return [dict(row) for row in rows]
 
 
 def get_node_by_name(conn: sqlite3.Connection, name: str) -> dict | None:
-    """Get a node by exact or fuzzy name match."""
+    """Get a node by name with progressive fuzzy matching.
+
+    Tries exact match, then LIKE, then space-stripped match so that
+    'Load Image' finds 'LoadImage' and vice versa.
+    """
+    # 1. Exact match on name or display_name
     row = conn.execute(
-        "SELECT n.*, p.url, p.content FROM nodes n LEFT JOIN pages p ON p.id = n.page_id WHERE n.name LIKE ? LIMIT 1",
-        (f"%{name}%",),
+        "SELECT n.*, p.url, p.content FROM nodes n LEFT JOIN pages p ON p.id = n.page_id "
+        "WHERE n.name = ? OR n.display_name = ? LIMIT 1",
+        (name, name),
     ).fetchone()
-    return dict(row) if row else None
+    if row:
+        return dict(row)
+
+    # 2. LIKE match (partial)
+    row = conn.execute(
+        "SELECT n.*, p.url, p.content FROM nodes n LEFT JOIN pages p ON p.id = n.page_id "
+        "WHERE n.name LIKE ? OR n.display_name LIKE ? LIMIT 1",
+        (f"%{name}%", f"%{name}%"),
+    ).fetchone()
+    if row:
+        return dict(row)
+
+    # 3. Space-stripped match ('Load Image' → 'LoadImage')
+    stripped = name.replace(" ", "")
+    row = conn.execute(
+        "SELECT n.*, p.url, p.content FROM nodes n LEFT JOIN pages p ON p.id = n.page_id "
+        "WHERE REPLACE(n.name, ' ', '') LIKE ? OR REPLACE(n.display_name, ' ', '') LIKE ? LIMIT 1",
+        (f"%{stripped}%", f"%{stripped}%"),
+    ).fetchone()
+    if row:
+        return dict(row)
+
+    return None
 
 
 def list_all_categories(conn: sqlite3.Connection) -> dict:
@@ -293,21 +360,86 @@ def list_all_categories(conn: sqlite3.Connection) -> dict:
 
 
 def search_code_examples(conn: sqlite3.Connection, query: str, limit: int = 10) -> list[dict]:
-    """Search code examples by topic using section FTS."""
+    """Search code examples by topic using a three-layer search strategy.
+
+    Layer 1: Section FTS — matches sections linked to code examples.
+    Layer 2: Page FTS — matches pages, returns their code examples (catches
+             the ~67% of examples with no section_id).
+    Layer 3: Code text LIKE — direct search on code content for class names,
+             imports, etc.
+    """
+    seen: set[int] = set()
+    results: list[dict] = []
+
+    def _collect(rows: list[sqlite3.Row]) -> None:
+        for row in rows:
+            r = dict(row)
+            ce_id = r.pop("ce_id", None)
+            if ce_id is not None and ce_id in seen:
+                continue
+            if ce_id is not None:
+                seen.add(ce_id)
+            results.append(r)
+
+    # Layer 1: section FTS → code_examples via section_id
     try:
-        rows = conn.execute(
-            """
-            SELECT ce.language, ce.code, ce.context, s.heading, p.title, p.url
-            FROM sections_fts
-            JOIN sections s ON s.id = sections_fts.rowid
-            JOIN code_examples ce ON ce.section_id = s.id
-            JOIN pages p ON p.id = ce.page_id
-            WHERE sections_fts MATCH ?
-            ORDER BY rank
-            LIMIT ?
-            """,
-            (query, limit),
-        ).fetchall()
-        return [dict(row) for row in rows]
+        _collect(
+            conn.execute(
+                """
+                SELECT ce.id AS ce_id, ce.language, ce.code, ce.context,
+                       s.heading, p.title, p.url
+                FROM sections_fts
+                JOIN sections s ON s.id = sections_fts.rowid
+                JOIN code_examples ce ON ce.section_id = s.id
+                JOIN pages p ON p.id = ce.page_id
+                WHERE sections_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (query, limit),
+            ).fetchall()
+        )
     except sqlite3.OperationalError:
-        return []
+        pass
+
+    # Layer 2: page FTS → code_examples via page_id
+    if len(results) < limit:
+        try:
+            _collect(
+                conn.execute(
+                    """
+                    SELECT ce.id AS ce_id, ce.language, ce.code, ce.context,
+                           s.heading, p.title, p.url
+                    FROM pages_fts
+                    JOIN pages p ON p.id = pages_fts.rowid
+                    JOIN code_examples ce ON ce.page_id = p.id
+                    LEFT JOIN sections s ON s.id = ce.section_id
+                    WHERE pages_fts MATCH ?
+                    ORDER BY rank
+                    LIMIT ?
+                    """,
+                    (query, limit - len(results)),
+                ).fetchall()
+            )
+        except sqlite3.OperationalError:
+            pass
+
+    # Layer 3: direct LIKE search on code text and context
+    if len(results) < limit:
+        like_pattern = f"%{query}%"
+        _collect(
+            conn.execute(
+                """
+                SELECT ce.id AS ce_id, ce.language, ce.code, ce.context,
+                       s.heading, p.title, p.url
+                FROM code_examples ce
+                JOIN pages p ON p.id = ce.page_id
+                LEFT JOIN sections s ON s.id = ce.section_id
+                WHERE ce.code LIKE ? OR ce.context LIKE ?
+                LIMIT ?
+                """,
+                (like_pattern, like_pattern, limit - len(results)),
+            ).fetchall()
+        )
+
+    return results[:limit]

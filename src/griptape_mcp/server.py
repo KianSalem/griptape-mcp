@@ -1,7 +1,5 @@
 """MCP server exposing Griptape documentation to LLMs."""
 
-import json
-
 from mcp.server.fastmcp import FastMCP
 
 from griptape_mcp.db import (
@@ -174,7 +172,20 @@ def get_node_details(node_name: str) -> str:
     node = get_node_by_name(conn, node_name)
 
     if not node:
-        return f"No node found matching '{node_name}'. Try search_griptape_nodes() to find available nodes."
+        # Auto-fallback: search for similar nodes instead of giving up
+        similar = db_search_nodes(conn, node_name)
+        if similar:
+            lines = [f"No exact match for '{node_name}', but found similar nodes:\n"]
+            for n in similar[:5]:
+                lines.append(f"- **{n.get('display_name') or n['name']}** [{n['category']}]")
+                if n.get("description"):
+                    lines.append(f"  {n['description']}")
+                if n.get("url"):
+                    lines.append(f"  Docs: {n['url']}")
+                lines.append("")
+            lines.append("Use one of these exact names to get full details.")
+            return "\n".join(lines)
+        return f"No node found matching '{node_name}'. Try search_griptape_nodes() to browse available nodes."
 
     lines = [
         f"# {node.get('display_name') or node['name']}",
@@ -243,7 +254,10 @@ def get_code_examples(topic: str) -> str:
 
     lines = [f"Found {len(results)} code example(s) for '{topic}':\n"]
     for r in results:
-        lines.append(f"### From: {r['title']} > {r['heading']}")
+        if r.get("heading"):
+            lines.append(f"### From: {r['title']} > {r['heading']}")
+        else:
+            lines.append(f"### From: {r['title']}")
         if r.get("url"):
             lines.append(f"URL: {r['url']}")
         lang = r.get("language", "python")
