@@ -32,7 +32,7 @@ Your AI keeps hallucinating Griptape method names. You ask it to build an Agent,
 | 🧩 **125 visual nodes** | Every node in Griptape Nodes across 17 categories |
 | 🔍 **Full-text search** | SQLite FTS5 — fast, typo-tolerant, ranked by relevance |
 | 💻 **714 code examples** | Real, working snippets pulled straight from the official docs |
-| 📦 **Zero runtime deps** | Pre-built database ships with the package. No scraping at query time. |
+| 📦 **Ships ready to go** | Pre-built database included. No network calls, no API keys, no scraping at query time. |
 
 ---
 
@@ -204,7 +204,8 @@ The architecture is intentionally boring — a SQLite file shipped inside the pi
 | Dict | 4 | | Audio | 3 |
 | Execution | 3 | | Rules | 2 |
 | Adv. Media Library | 2 | | Agents | 1 |
-| Convert | 1 | | 3D | 1 |
+| Convert | 1 | | Utils | 1 |
+| 3D | 1 | | | |
 
 ---
 
