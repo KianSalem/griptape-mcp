@@ -7,6 +7,9 @@ requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Kian"}]
 keywords = ["mcp", "model-context-protocol", "griptape", "llm", "documentation", "ai", "claude"]
+dependencies = [
+    "mcp>=1.8.0,<3",
+]
 
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -24,10 +27,6 @@ classifiers = [
 Homepage = "https://github.com/KianSalem/griptape-mcp"
 Repository = "https://github.com/KianSalem/griptape-mcp"
 "Bug Tracker" = "https://github.com/KianSalem/griptape-mcp/issues"
-
-dependencies = [
-    "mcp>=1.8.0,<3",
-]
 
 [project.scripts]
 griptape-mcp = "griptape_mcp.__main__:main"
