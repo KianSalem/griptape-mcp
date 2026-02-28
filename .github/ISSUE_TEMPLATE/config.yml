@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Griptape Framework Docs
+    url: https://docs.griptape.ai
+    about: The actual Griptape documentation
+  - name: Griptape Nodes Docs
+    url: https://docs.griptapenodes.com
+    about: Griptape visual workflow builder documentation
+  - name: MCP Specification
+    url: https://modelcontextprotocol.io
+    about: Learn about the Model Context Protocol

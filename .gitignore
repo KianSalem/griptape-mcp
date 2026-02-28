@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+
+# Database build artifacts (the shipped DB at src/griptape_mcp/data/ is tracked)
+# /griptape.db matches only the root-level CI build artifact, not the packaged one
+/griptape.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# IDE
+.idea/
+.vscode/
+*.swp
