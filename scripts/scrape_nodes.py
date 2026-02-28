@@ -87,7 +87,7 @@ async def scrape(db_path: Path) -> dict:
     print(f"[nodes] Found {len(urls)} pages to scrape (filtered from {len(entries)} sitemap entries)")
 
     print("[nodes] Fetching pages...")
-    pages = await fetch_pages(urls)
+    pages = await fetch_pages(urls, max_concurrent=1, request_delay=2.0)
 
     conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA journal_mode=WAL")

@@ -1,6 +1,7 @@
 """Shared scraping utilities for MkDocs documentation sites."""
 
 import asyncio
+import random
 import re
 import defusedxml.ElementTree as ET
 
@@ -8,8 +9,8 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 
 USER_AGENT = "griptape-mcp-scraper/0.1 (+https://github.com/KianBrose/griptape-mcp)"
-MAX_CONCURRENT = 3
-REQUEST_DELAY = 1.0  # seconds between requests
+DEFAULT_MAX_CONCURRENT = 3
+DEFAULT_REQUEST_DELAY = 1.0  # seconds between requests
 MAX_RETRIES = 5
 MAX_RESPONSE_SIZE = 10_000_000  # 10 MB - no legitimate docs page should exceed this
 
@@ -45,9 +46,19 @@ async def fetch_sitemap(url: str) -> list[dict]:
     return entries
 
 
-async def fetch_pages(urls: list[str]) -> list[dict]:
-    """Async fetch multiple pages with rate limiting and retry on 429."""
-    semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+async def fetch_pages(
+    urls: list[str],
+    max_concurrent: int = DEFAULT_MAX_CONCURRENT,
+    request_delay: float = DEFAULT_REQUEST_DELAY,
+) -> list[dict]:
+    """Async fetch multiple pages with rate limiting and retry on 429.
+
+    Args:
+        urls: List of URLs to fetch.
+        max_concurrent: Max simultaneous requests (lower = gentler on the server).
+        request_delay: Seconds to wait between successful requests.
+    """
+    semaphore = asyncio.Semaphore(max_concurrent)
 
     async def fetch_one(client: httpx.AsyncClient, url: str) -> dict:
         async with semaphore:
@@ -55,8 +66,8 @@ async def fetch_pages(urls: list[str]) -> list[dict]:
                 try:
                     resp = await client.get(url, headers={"User-Agent": USER_AGENT})
                     if resp.status_code == 429:
-                        wait = 10 * (attempt + 1)
-                        print(f"  [429] Rate limited, waiting {wait}s (attempt {attempt + 1}/{MAX_RETRIES})")
+                        wait = 10 * (attempt + 1) + random.uniform(0, 5)
+                        print(f"  [429] Rate limited, waiting {wait:.0f}s (attempt {attempt + 1}/{MAX_RETRIES})")
                         await asyncio.sleep(wait)
                         continue
                     resp.raise_for_status()
@@ -66,12 +77,12 @@ async def fetch_pages(urls: list[str]) -> list[dict]:
                     text = resp.text
                     if len(text) > MAX_RESPONSE_SIZE:
                         return {"url": url, "html": None, "error": f"Response too large ({len(text)} bytes)"}
-                    await asyncio.sleep(REQUEST_DELAY)
+                    await asyncio.sleep(request_delay)
                     return {"url": url, "html": text, "error": None}
                 except httpx.HTTPStatusError as e:
                     if e.response.status_code == 429 and attempt < MAX_RETRIES - 1:
-                        wait = 10 * (attempt + 1)
-                        print(f"  [429] Rate limited, waiting {wait}s (attempt {attempt + 1}/{MAX_RETRIES})")
+                        wait = 10 * (attempt + 1) + random.uniform(0, 5)
+                        print(f"  [429] Rate limited, waiting {wait:.0f}s (attempt {attempt + 1}/{MAX_RETRIES})")
                         await asyncio.sleep(wait)
                         continue
                     return {"url": url, "html": None, "error": str(e)}
